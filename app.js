@@ -1,4 +1,5 @@
 "use strict";
+const APP_VER = "2026-11-10-11";
 const $ = s => document.querySelector(s);
 const abs = p => new URL(p, location.href).href;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -52,7 +53,7 @@ async function loadDict() {
   const r = await fetch("data/dict.json");
   DICT = await r.json();
   IDX = Matcher.build(DICT);
-  $("#ver").textContent = `사전 ${DICT.ver} (기준일 ${DICT.date}) · 성분 ${Object.keys(DICT.ing).length}종 · 검색어 ${DICT.terms.length.toLocaleString()}개`;
+  $("#ver").textContent = `앱 ${APP_VER} · 사전 ${DICT.ver} (기준일 ${DICT.date}) · 성분 ${Object.keys(DICT.ing).length}종 · 검색어 ${DICT.terms.length.toLocaleString()}개`;
   status("");
 }
 
@@ -476,7 +477,14 @@ $("#textIn").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shif
 /* ---------- 시작 ---------- */
 (async () => {
   setNet(); banners();
-  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(r => r.update()).catch(() => {});
+    // 새 버전이 설치되면 한 번 자동으로 새로고침
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (had && !sessionStorage.getItem("reloaded")) { sessionStorage.setItem("reloaded", 1); location.reload(); }
+    });
+  }
   try { await loadDict(); } catch (e) { status("사전을 불러오지 못했습니다. 처음 한 번은 인터넷 연결이 필요합니다."); return; }
   // 엔진은 미리 준비(첫 실행 시 데이터 저장)
   getWorker(active).then(() => {
