@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2a44">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="라벨스캔">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>라벨스캔</title>
+<style>
+:root{--bg:#f3f5f8;--card:#fff;--ink:#14202e;--sub:#5b6878;--line:#dfe4ea;--navy:#0f2a44;--accent:#1f6feb;
+--narc:#c8102e;--psy:#d9480f;--can:#2b8a3e;--tmp:#7048e8;--pre:#b7791f;--gray:#868e96}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+header{background:var(--navy);color:#fff;padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:5}
+header h1{font-size:17px;margin:0;font-weight:700;letter-spacing:-.2px;flex:1}
+#net{font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.15)}
+nav{display:flex;background:var(--navy);padding:0 8px 8px;gap:6px;position:sticky;top:calc(env(safe-area-inset-top) + 47px);z-index:5}
+nav button{flex:1;border:0;border-radius:10px;padding:9px 0;font-size:14px;font-weight:600;background:rgba(255,255,255,.1);color:#cfd8e3}
+nav button.on{background:#fff;color:var(--navy)}
+main{padding:12px 12px calc(env(safe-area-inset-bottom) + 24px);max-width:720px;margin:0 auto}
+.banner{background:#fff4e6;border:1px solid #ffd8a8;color:#7a4100;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13.5px}
+.banner b{color:#5c3200}.banner .x{float:right;border:0;background:none;font-size:16px;color:#7a4100}
+.panel{display:none}.panel.on{display:block}
+.langs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:5px 11px;font-size:13px;color:var(--sub)}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.cam{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:3/4;max-height:58vh;width:100%}
+.cam video,.cam img{width:100%;height:100%;object-fit:cover;display:block}
+.guide{position:absolute;left:7%;right:7%;top:30%;height:40%;border:2px solid rgba(255,255,255,.9);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
+.guide.hit{border-color:#ff6b6b;box-shadow:0 0 0 999px rgba(120,0,0,.35)}
+.camhint{position:absolute;left:0;right:0;bottom:10px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 2px #000}
+.camover{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#fff;text-align:center;padding:20px}
+.row{display:flex;gap:8px;margin-top:10px}
+.btn{flex:1;border:0;border-radius:12px;padding:13px 0;font-size:15px;font-weight:700;background:var(--accent);color:#fff}
+.btn.sec{background:#e7ecf2;color:var(--navy)}.btn:disabled{opacity:.5}
+.status{font-size:12.5px;color:var(--sub);margin-top:8px;min-height:18px}
+.bar{height:4px;background:#e7ecf2;border-radius:2px;overflow:hidden;margin-top:6px;display:none}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:16px;font-family:inherit;resize:vertical}
+h2{font-size:15px;margin:18px 2px 8px;display:flex;align-items:center;gap:8px}
+h2 .clr{margin-left:auto;font-size:12.5px;border:0;background:none;color:var(--accent)}
+.card{background:var(--card);border-radius:14px;padding:12px 14px;margin-bottom:10px;border-left:6px solid var(--gray);box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.card.마약{border-color:var(--narc)}.card.향정{border-color:var(--psy)}.card.대마{border-color:var(--can)}.card.임시마약류{border-color:var(--tmp)}.card.원료물질{border-color:var(--pre)}
+.verdict{font-size:12px;font-weight:800;color:#fff;border-radius:6px;padding:2px 8px;display:inline-block;margin-right:6px;background:var(--gray)}
+.verdict.마약{background:var(--narc)}.verdict.향정{background:var(--psy)}.verdict.대마{background:var(--can)}.verdict.임시마약류{background:var(--tmp)}.verdict.원료물질{background:var(--pre)}
+.lvl{font-size:11.5px;font-weight:700;border-radius:6px;padding:2px 7px;display:inline-block}
+.lvl.유사{background:#fff3bf;color:#7c5a00}.lvl.주의{background:#e9ecef;color:#495057}
+.name{font-size:17px;font-weight:800;margin:6px 0 2px;letter-spacing:-.2px}
+.en{font-size:13px;color:var(--sub)}
+.law{font-size:13px;margin-top:6px}
+.ev{font-size:12.5px;color:var(--sub);margin-top:6px;border-top:1px dashed var(--line);padding-top:6px}
+.ev span{display:inline-block;background:#f1f3f5;border-radius:6px;padding:1px 6px;margin:2px 4px 2px 0;color:var(--ink)}
+.note{font-size:12.5px;background:#fff9db;border-radius:8px;padding:6px 8px;margin-top:6px;color:#5c4400}
+.none{background:#fff;border-radius:14px;padding:14px;font-size:14px;border:1px dashed #adb5bd}
+.none b{font-size:16px}
+details.ocr{margin-top:8px;font-size:12.5px;color:var(--sub)}details.ocr pre{white-space:pre-wrap;background:#fff;border-radius:8px;padding:8px;max-height:160px;overflow:auto}
+footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-height:1.6}
+.legend{display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px;margin-top:6px;justify-content:center}
+</style>
+</head>
+<body>
+<header><h1>라벨스캔 <small style="font-weight:500;font-size:12px;opacity:.75">성분·제품명으로 마약류 판정</small></h1><span id="net">확인 중</span></header>
+<nav>
+  <button data-tab="cam" class="on">카메라</button>
+  <button data-tab="photo">사진</button>
+  <button data-tab="text">직접 입력</button>
+</nav>
+<main>
+  <div id="banners"></div>
+
+  <div class="langs" id="langs">
+    <button class="chip on" data-l="eng">영문</button>
+    <button class="chip" data-l="eng+jpn">일본어</button>
+    <button class="chip" data-l="eng+chi_sim">중국어(간체)</button>
+    <button class="chip" data-l="eng+chi_tra">중국어(번체)</button>
+    <button class="chip" data-l="eng+kor">한국어</button>
+  </div>
+
+  <section class="panel on" id="p-cam">
+    <div class="cam" id="camBox">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="guide" id="guide"></div>
+      <div class="camhint" id="camHint">제품명·성분명을 네모 칸 안에 맞춰 주세요</div>
+      <div class="camover" id="camOver"><div style="font-size:15px">포장에 카메라를 비추면<br>제품명·성분명을 자동으로 읽어 판정합니다</div><button class="btn" id="camStart" style="flex:none;padding:12px 26px">카메라 켜기</button></div>
+    </div>
+    <div class="row">
+      <button class="btn sec" id="camPause" disabled>일시정지</button>
+      <button class="btn sec" id="camTorch" style="display:none">플래시</button>
+      <button class="btn sec" id="camStop" disabled>끄기</button>
+    </div>
+  </section>
+
+  <section class="panel" id="p-photo">
+    <div class="cam" id="photoBox" style="aspect-ratio:auto;min-height:180px;display:flex;align-items:center;justify-content:center">
+      <div class="camover" id="photoOver" style="position:static"><div>사진을 찍거나 앨범에서 골라 주세요</div></div>
+      <img id="photoImg" alt="" style="display:none;object-fit:contain;max-height:58vh">
+    </div>
+    <input type="file" id="photoInput" accept="image/*" hidden>
+    <div class="row"><button class="btn" id="photoPick">사진 선택 / 촬영</button></div>
+  </section>
+
+  <section class="panel" id="p-text">
+    <textarea id="textIn" placeholder="제품명이나 성분명을 입력하세요&#10;예) Xanax, Alprazolam, パブロン, 思诺思"></textarea>
+    <div class="row"><button class="btn" id="textGo">판정</button><button class="btn sec" id="textClr">지우기</button></div>
+  </section>
+
+  <div class="status" id="status"></div>
+  <div class="bar" id="bar"><i></i></div>
+  <details class="ocr" id="ocrBox" hidden><summary>인식된 글자 보기</summary><pre id="ocrText"></pre></details>
+
+  <h2>판정 결과 <button class="clr" id="clear">결과 지우기</button></h2>
+  <div id="results"><div class="none">아직 판정한 내용이 없습니다.</div></div>
+
+  <footer>
+    <div class="legend"><span class="verdict 마약">마약</span><span class="verdict 향정">향정</span><span class="verdict 대마">대마</span><span class="verdict 임시마약류">임시마약류</span><span class="verdict 원료물질">원료물질</span></div>
+    공개자료 기반 참고용 판정 도구입니다. 최종 판단은 법령·공고 원문과 성분분석 결과에 따릅니다.<br>
+    <span id="ver"></span>
+  </footer>
+</main>
+<script src="vendor/tesseract.min.js"></script>
+<script src="match.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

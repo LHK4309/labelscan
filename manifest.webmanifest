@@ -1,0 +1,17 @@
+{
+  "name": "라벨스캔",
+  "short_name": "라벨스캔",
+  "description": "의약품 포장의 제품명·성분명으로 국내 마약류·임시마약류 해당 여부를 확인하는 오프라인 도구",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f2a44",
+  "theme_color": "#0f2a44",
+  "lang": "ko",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
