@@ -80,10 +80,17 @@ async function getWorker() {
   try { return await workerLoading; } finally { workerLoading = null; }
 }
 
-async function ocr(canvas) {
+/* 글자 인식 — 신뢰도 낮은 단어(잡음)는 버림. minConf: 0~100 */
+async function ocr(canvas, minConf = 0) {
   const w = await getWorker();
-  const { data } = await w.recognize(canvas);
-  return data.text || "";
+  const { data } = await w.recognize(canvas, {}, { text: true, blocks: minConf > 0 });
+  if (!minConf || !data.blocks) return data.text || "";
+  const lines = [];
+  for (const b of data.blocks) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+    const ws = (l.words || []).filter(x => x.confidence >= minConf && x.text.trim().length > 0).map(x => x.text);
+    if (ws.length) lines.push(ws.join(" "));
+  }
+  return lines.join("\n");
 }
 
 /* 이미지 전처리: 회색조 + 명암 늘리기 */
@@ -115,42 +122,46 @@ function lawText(i) {
 function verdictLabel(g) {
   return { 마약: "마약", 향정: "향정신성의약품", 대마: "대마", 임시마약류: "임시마약류", 원료물질: "원료물질(마약류 아님)" }[g] || g;
 }
+const RANK = { 확인: 0, 상표: 1, 유사: 2, 주의: 3 };
+function isMain(r) { return r.level === "확인" || (r.level === "상표" && r.confirmed); }
 function render(newRes, opts = {}) {
   for (const r of newRes) {
     const prev = found.get(r.id);
-    if (!prev) found.set(r.id, r);
-    else {
-      for (const e of r.evidence) if (!prev.evidence.some(x => x.term === e.term && x.type === e.type)) prev.evidence.push(e);
-      if (r.level === "확인") prev.level = "확인";
-      else if (r.level === "유사" && prev.level === "주의") prev.level = "유사";
-    }
+    if (!prev) { found.set(r.id, r); continue; }
+    for (const e of r.evidence) if (!prev.evidence.some(x => x.term === e.term && x.type === e.type)) prev.evidence.push(e);
+    if (RANK[r.level] < RANK[prev.level]) prev.level = r.level;
+    if (r.confirmed) prev.confirmed = true;
   }
   const box = $("#results");
-  if (!found.size) {
+  const gord = { 마약: 0, 향정: 1, 대마: 2, 임시마약류: 3, 원료물질: 5 };
+  const all = [...found.values()].sort((a, b) => RANK[a.level] - RANK[b.level] || (gord[a.ing.g] ?? 4) - (gord[b.ing.g] ?? 4));
+  const main = all.filter(isMain), ref = all.filter(r => !isMain(r));
+  if (!all.length) {
     box.innerHTML = opts.searched
-      ? `<div class="none"><b>사전 미등재</b><br>사전에서 일치하는 성분·제품명을 찾지 못했습니다. <b>비해당이라는 뜻이 아닙니다.</b><br>성분표의 글자를 더 가까이·밝게 비추거나, ‘직접 입력’으로 성분명을 넣어 확인해 주세요.</div>`
+      ? `<div class="none"><b>사전 미등재</b><br>사전에서 일치하는 성분·제품명을 찾지 못했습니다. <b>비해당이라는 뜻이 아닙니다.</b><br>성분표 글자를 더 가까이·밝게 비추거나, ‘직접 입력’으로 성분명을 넣어 확인해 주세요.</div>`
       : `<div class="none">아직 판정한 내용이 없습니다.</div>`;
     return;
   }
-  const order = { 확인: 0, 유사: 1, 주의: 2 }, gord = { 마약: 0, 향정: 1, 대마: 2, 임시마약류: 3, 원료물질: 5 };
-  const list = [...found.values()].sort((a, b) => order[a.level] - order[b.level] || (gord[a.ing.g] ?? 4) - (gord[b.ing.g] ?? 4));
-  box.innerHTML = list.map(r => {
+  const card = r => {
     const i = r.ing;
-    const lvl = r.level === "확인" ? "" : r.level === "유사"
-      ? `<span class="lvl 유사">글자 유사 — 포장 표기 직접 확인</span>`
-      : `<span class="lvl 주의">참고 — 일부 제품만 해당하거나 짧은 단어</span>`;
     const ev = r.evidence.map(e => `<span>${esc(e.type)}: ${esc(e.orig)}${e.how !== "일치" ? " (" + esc(e.how) + ")" : ""}</span>`).join("");
     const names = [i.z, i.j].filter(Boolean).join(" · ");
-    return `<div class="card ${esc(i.g)}">
-      <span class="verdict ${esc(i.g)}">${esc(verdictLabel(i.g))}</span>${lvl}
+    const tag = isMain(r) ? (r.level === "상표" ? `<span class="lvl 상표">제품명으로 찾음 — 성분표 확인 권장</span>` : "")
+      : `<span class="lvl 주의">${r.level === "유사" ? "글자가 비슷함(오인식 가능)" : r.level === "상표" ? "제품명 1회만 인식 — 다시 비춰 확인" : "짧은·흔한 단어 일치"}</span>`;
+    return `<div class="card ${esc(i.g)}${isMain(r) ? "" : " weak"}">
+      <span class="verdict ${esc(i.g)}">${esc(verdictLabel(i.g))}</span>${tag}
       <div class="name">${esc(i.k || i.e)}</div>
       <div class="en">${esc(i.k ? i.e : "")}${names ? " · " + esc(names) : ""}</div>
       <div class="law">근거: ${esc(lawText(i))}</div>
-      ${i.x ? `<div class="note">혼합제제 주의: ${esc(i.x)}</div>` : ""}
-      ${i.t ? `<div class="note">${esc(i.t)}</div>` : ""}
+      ${isMain(r) && i.x ? `<div class="note">혼합제제 주의: ${esc(i.x)}</div>` : ""}
+      ${isMain(r) && i.t ? `<div class="note">${esc(i.t)}</div>` : ""}
       <div class="ev">찾은 근거 ${ev}</div>
     </div>`;
-  }).join("");
+  };
+  let html = main.length ? main.map(card).join("")
+    : `<div class="none"><b>사전 미등재</b><br>확실하게 일치하는 성분·제품명을 찾지 못했습니다. <b>비해당이라는 뜻이 아닙니다.</b></div>`;
+  if (ref.length) html += `<details class="refs"><summary>참고: 약한 일치 ${ref.length}건 (판정 근거로 쓰지 마세요)</summary>${ref.map(card).join("")}</details>`;
+  box.innerHTML = html;
 }
 function showOcr(text) {
   lastText = text;
@@ -162,7 +173,7 @@ function judge(text, opts) {
   render(res, opts);
   return res;
 }
-$("#clear").onclick = () => { found.clear(); render([]); showOcr(""); };
+$("#clear").onclick = () => { found.clear(); if (typeof seen !== "undefined") seen.clear(); render([]); showOcr(""); };
 
 /* ---------- 탭 ---------- */
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
@@ -181,6 +192,7 @@ document.querySelectorAll("#langs .chip").forEach(c => {
 
 /* ---------- 카메라(실시간) ---------- */
 let stream = null, running = false, paused = false, track = null, torchOn = false, frames = 0, lastMs = 0, shotHi = false;
+const seen = new Map();   // 실시간 모드에서 제품명 인식 횟수
 const barcode = ("BarcodeDetector" in window) ? new BarcodeDetector({ formats: ["ean_13", "data_matrix", "code_128", "upc_a"] }) : null;
 
 async function camStart() {
@@ -233,17 +245,23 @@ async function loop() {
       } catch (e) {}
     }
     let text = "";
-    try { text = await ocr(canvas); } catch (e) { status("인식 오류: " + e.message); await sleep(800); continue; }
+    try { text = await ocr(canvas, hi ? 60 : 70); } catch (e) { status("인식 오류: " + e.message); await sleep(800); continue; }
     if (!running) break;
     lastMs = performance.now() - t0;
     const clean = text.replace(/\s+/g, " ").trim();
     const lv = $("#live"); lv.style.display = "block";
     lv.textContent = clean ? "인식: " + clean.slice(0, 120) : "글자를 찾지 못했습니다 — 더 가까이, 밝게 비춰 주세요";
     if (text.trim()) showOcr(text);
-    res = res.concat(Matcher.match(IDX, text));
-    const before = new Set([...found.entries()].filter(([, r]) => r.level === "확인").map(([k]) => k));
+    const m = Matcher.match(IDX, text, { fuzzy: false });
+    for (const r of m) if (r.level === "상표") {           // 같은 제품명이 2번 이상 읽혀야 확정
+      const k = r.id + "|" + r.evidence.filter(e => e.strength === 1).map(e => e.term).sort().join(",");
+      const n = (seen.get(k) || 0) + 1; seen.set(k, n);
+      if (n >= 2 || hi) r.confirmed = true;
+    }
+    res = res.concat(m);
+    const before = new Set([...found.entries()].filter(([, r]) => isMain(r)).map(([k]) => k));
     render(res, { searched: true });
-    const fresh = res.filter(r => r.level === "확인" && !before.has(r.id));
+    const fresh = res.filter(r => isMain(r) && !before.has(r.id));
     if (fresh.length) {
       $("#guide").classList.add("hit");
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
@@ -291,11 +309,11 @@ $("#photoInput").onchange = async e => {
   }
   try {
     const c = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000);
-    const text = await ocr(c);
+    const text = await ocr(c, 60);
     showOcr(text);
-    res = res.concat(Matcher.match(IDX, text));
+    res = res.concat(Matcher.match(IDX, text).map(r => (r.level === "상표" && (r.confirmed = true), r)));
     render(res, { searched: true });
-    status(res.length ? "판정 완료" : "판정 완료 — 사전에서 찾지 못했습니다");
+    status(res.some(isMain) ? "판정 완료" : "판정 완료 — 확실한 일치 없음(사전 미등재)");
   } catch (err) { status("인식 오류: " + err.message); }
   e.target.value = "";
 };
@@ -305,7 +323,8 @@ $("#textGo").onclick = () => {
   const t = $("#textIn").value;
   if (!t.trim()) return;
   found.clear(); showOcr("");
-  const r = judge(t, { searched: true });
+  const r = Matcher.match(IDX, t).map(x => (x.level === "상표" && (x.confirmed = true), x));
+  render(r, { searched: true });
   status(r.length ? "" : "사전에서 찾지 못했습니다");
 };
 $("#textClr").onclick = () => { $("#textIn").value = ""; };

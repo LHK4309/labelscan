@@ -62,7 +62,8 @@
   }
 
   /** 텍스트 → 매칭 결과(성분별 묶음) */
-  function match(idx, text) {
+  function match(idx, text, opts) {
+    opts = opts || {};
     const { dict, latin, cjk, fuzzy, maxWords } = idx;
     const hits = [];   // {termIdx, found, how}
     const norm = normLatin(text);
@@ -73,12 +74,15 @@
         const w = toks.slice(s, s + n).join(" ");
         const ids = latin.get(w);
         if (!ids) continue;
+        // 'without codeine', 'codeine free', 'w/o codeine' 같은 부정 표현은 제외
+        const prev = toks[s - 1], prev2 = toks[s - 2], next = toks[s + n];
+        if (prev === "without" || prev === "non" || (prev === "o" && prev2 === "w") || next === "free" || next === "-free") continue;
         for (const ti of ids) hits.push({ ti, found: w, how: "일치" });
         for (let k = s; k < s + n; k++) used.add(k);
       }
     }
     // OCR 오인식 보정: 성분명(7자 이상)만 1~2글자 차이 허용
-    toks.forEach((tk, k) => {
+    if (opts.fuzzy !== false) toks.forEach((tk, k) => {
       if (used.has(k) || tk.length < 7 || !/^[a-z\-]+$/.test(tk)) return;
       const max = tk.length >= 11 ? 2 : 1;
       for (const [key, ti] of fuzzy.get(tk[0]) || []) {
@@ -110,8 +114,8 @@
       const t = dict.terms[h.ti];
       const id = t[1];
       const type = dict.types[t[2]];
-      const short = (CJK.test(t[0]) && t[0].length <= 2) || (!CJK.test(t[0]) && t[0].length <= 3);
-      const ev = { term: t[0], orig: t[3] || t[0], type, caution: !!t[4] || short, how: h.how, found: h.found };
+      const strength = h.how === "일치" ? t[4] : 2;     // 0 성분명 1 상표·제품명 2 약함
+      const ev = { term: t[0], orig: t[3] || t[0], type, strength, caution: strength === 2, how: h.how, found: h.found };
       if (!by.has(id)) by.set(id, []);
       const arr = by.get(id);
       if (!arr.some(e => e.term === ev.term && e.type === ev.type)) arr.push(ev);
@@ -120,11 +124,11 @@
     for (const [id, evs] of by) {
       const ing = dict.ing[id];
       if (!ing) continue;
-      const strong = evs.filter(e => !e.caution && e.how === "일치" && e.type !== "임시마약류이력");
-      const level = strong.length ? "확인" : evs.some(e => e.how !== "일치") ? "유사" : "주의";
-      res.push({ id, ing, evidence: evs, level });
+      const best = Math.min(...evs.map(e => e.strength));
+      const level = best === 0 ? "확인" : best === 1 ? "상표" : evs.some(e => e.how !== "일치") ? "유사" : "주의";
+      res.push({ id, ing, evidence: evs, level, best });
     }
-    const rank = r => (r.level === "확인" ? 0 : r.level === "유사" ? 1 : 2) * 10 + ({ 마약: 0, 향정: 1, 대마: 2, 임시마약류: 3, 원료물질: 5 }[r.ing.g] ?? 4);
+    const rank = r => r.best * 10 + ({ 마약: 0, 향정: 1, 대마: 2, 임시마약류: 3, 원료물질: 5 }[r.ing.g] ?? 4);
     res.sort((a, b) => rank(a) - rank(b));
     return res;
   }
