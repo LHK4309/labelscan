@@ -180,7 +180,7 @@ document.querySelectorAll("#langs .chip").forEach(c => {
 });
 
 /* ---------- 카메라(실시간) ---------- */
-let stream = null, running = false, paused = false, track = null, torchOn = false;
+let stream = null, running = false, paused = false, track = null, torchOn = false, frames = 0, lastMs = 0, shotHi = false;
 const barcode = ("BarcodeDetector" in window) ? new BarcodeDetector({ formats: ["ean_13", "data_matrix", "code_128", "upc_a"] }) : null;
 
 async function camStart() {
@@ -196,7 +196,7 @@ async function camStart() {
   const caps = track.getCapabilities ? track.getCapabilities() : {};
   $("#camTorch").style.display = caps.torch ? "" : "none";
   $("#camOver").style.display = "none";
-  $("#camPause").disabled = $("#camStop").disabled = false;
+  $("#camPause").disabled = $("#camStop").disabled = $("#camShot").disabled = false;
   running = true; paused = false; $("#camPause").textContent = "일시정지";
   loop();
 }
@@ -204,22 +204,25 @@ function camStop() {
   running = false;
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; track = null;
-  $("#camOver").style.display = ""; $("#camPause").disabled = $("#camStop").disabled = true;
+  $("#camOver").style.display = ""; $("#camPause").disabled = $("#camStop").disabled = $("#camShot").disabled = true; $("#live").style.display = "none";
   $("#guide").classList.remove("hit");
 }
 async function loop() {
   const v = $("#video");
+  status("글자 인식 엔진 준비 중…");
   try { await getWorker(); } catch (e) { status("엔진 준비 실패: " + e.message); return; }
   while (running) {
     if (paused || !v.videoWidth) { await sleep(200); continue; }
-    status("읽는 중…");
+    const t0 = performance.now(); frames++;
     // 화면의 네모 칸 영역만 잘라서 인식
     const vw = v.videoWidth, vh = v.videoHeight, box = $("#camBox").getBoundingClientRect();
     const s = Math.max(box.width / vw, box.height / vh);            // object-fit: cover 보정
     const ox = (vw * s - box.width) / 2, oy = (vh * s - box.height) / 2;
     const gx = (box.width * 0.07 + ox) / s, gy = (box.height * 0.30 + oy) / s;
     const gw = (box.width * 0.86) / s, gh = (box.height * 0.40) / s;
-    const canvas = prep(v, gx, gy, gw, gh, 1400);
+    const canvas = prep(v, gx, gy, gw, gh, shotHi ? 1800 : 1000);
+    const hi = shotHi; shotHi = false;
+    status(hi ? "촬영한 화면 판독 중…" : `읽는 중… (${frames}번째${lastMs ? ", 1회 " + (lastMs / 1000).toFixed(1) + "초" : ""})`);
     let res = [];
     if (barcode) {
       try {
@@ -232,6 +235,10 @@ async function loop() {
     let text = "";
     try { text = await ocr(canvas); } catch (e) { status("인식 오류: " + e.message); await sleep(800); continue; }
     if (!running) break;
+    lastMs = performance.now() - t0;
+    const clean = text.replace(/\s+/g, " ").trim();
+    const lv = $("#live"); lv.style.display = "block";
+    lv.textContent = clean ? "인식: " + clean.slice(0, 120) : "글자를 찾지 못했습니다 — 더 가까이, 밝게 비춰 주세요";
     if (text.trim()) showOcr(text);
     res = res.concat(Matcher.match(IDX, text));
     const before = new Set([...found.entries()].filter(([, r]) => r.level === "확인").map(([k]) => k));
@@ -244,12 +251,17 @@ async function loop() {
       status("마약류 관련 성분을 찾았습니다. 결과를 확인하세요.");
       document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
-      status(text.trim() ? "계속 읽는 중… 글자가 칸 안에 크게 들어오게 해 주세요" : "글자를 찾는 중…");
+      status(hi ? (clean ? "이 화면에서는 사전 단어를 찾지 못했습니다(사전 미등재)" : "글자를 읽지 못했습니다 — 더 가까이·밝게 다시 찍어 주세요")
+                : `계속 읽는 중… (1회 ${(lastMs / 1000).toFixed(1)}초)`);
     }
     await sleep(250);
   }
 }
 $("#camStart").onclick = camStart;
+$("#camShot").onclick = () => {           // 한 장을 더 높은 해상도로 판독
+  shotHi = true; paused = false; $("#camPause").textContent = "일시정지"; $("#guide").classList.remove("hit");
+  status("다음 판독에서 이 화면을 정밀하게 읽습니다…");
+};
 $("#camStop").onclick = camStop;
 $("#camPause").onclick = () => {
   paused = !paused; $("#camPause").textContent = paused ? "계속 읽기" : "일시정지";

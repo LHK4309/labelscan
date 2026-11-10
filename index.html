@@ -26,6 +26,7 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 24px);max-width:720px;
 .banner{background:#fff4e6;border:1px solid #ffd8a8;color:#7a4100;border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13.5px}
 .banner b{color:#5c3200}.banner .x{float:right;border:0;background:none;font-size:16px;color:#7a4100}
 .panel{display:none}.panel.on{display:block}
+.langhd{font-size:12.5px;font-weight:700;color:var(--ink);margin:0 2px 6px}.langhd span{font-weight:400;color:var(--sub)}
 .langs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
 .chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:5px 11px;font-size:13px;color:var(--sub)}
 .chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
@@ -34,6 +35,7 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 24px);max-width:720px;
 .guide{position:absolute;left:7%;right:7%;top:30%;height:40%;border:2px solid rgba(255,255,255,.9);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.35)}
 .guide.hit{border-color:#ff6b6b;box-shadow:0 0 0 999px rgba(120,0,0,.35)}
 .camhint{position:absolute;left:0;right:0;bottom:10px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 2px #000}
+.live{position:absolute;left:8px;right:8px;top:8px;color:#fff;font-size:12px;background:rgba(0,0,0,.45);border-radius:8px;padding:4px 8px;max-height:3.6em;overflow:hidden;display:none}
 .camover{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#fff;text-align:center;padding:20px}
 .row{display:flex;gap:8px;margin-top:10px}
 .btn{flex:1;border:0;border-radius:12px;padding:13px 0;font-size:15px;font-weight:700;background:var(--accent);color:#fff}
@@ -72,6 +74,7 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
 <main>
   <div id="banners"></div>
 
+  <div class="langhd">포장에 적힌 글자의 언어 <span>(인식용 · 결과는 항상 한국어로 표시)</span></div>
   <div class="langs" id="langs">
     <button class="chip on" data-l="eng">영문</button>
     <button class="chip" data-l="eng+jpn">일본어</button>
@@ -84,10 +87,12 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
     <div class="cam" id="camBox">
       <video id="video" playsinline muted autoplay></video>
       <div class="guide" id="guide"></div>
-      <div class="camhint" id="camHint">제품명·성분명을 네모 칸 안에 맞춰 주세요</div>
+      <div class="camhint" id="camHint">제품명·성분명을 네모 칸 안에 크게 맞춰 주세요</div>
+      <div class="live" id="live"></div>
       <div class="camover" id="camOver"><div style="font-size:15px">포장에 카메라를 비추면<br>제품명·성분명을 자동으로 읽어 판정합니다</div><button class="btn" id="camStart" style="flex:none;padding:12px 26px">카메라 켜기</button></div>
     </div>
     <div class="row">
+      <button class="btn" id="camShot" disabled>이 화면으로 판정</button>
       <button class="btn sec" id="camPause" disabled>일시정지</button>
       <button class="btn sec" id="camTorch" style="display:none">플래시</button>
       <button class="btn sec" id="camStop" disabled>끄기</button>
