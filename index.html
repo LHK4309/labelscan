@@ -27,8 +27,9 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 24px);max-width:720px;
 .banner b{color:#5c3200}.banner .x{float:right;border:0;background:none;font-size:16px;color:#7a4100}
 .panel{display:none}.panel.on{display:block}
 .langhd{font-size:12.5px;font-weight:700;color:var(--ink);margin:0 2px 6px}.langhd span{font-weight:400;color:var(--sub)}
-.langs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
-.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:5px 11px;font-size:13px;color:var(--sub)}
+.langs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 10px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 2px;font-size:13px;color:var(--sub);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip small{font-size:11.5px;opacity:.85}
 .chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
 .cam{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:3/4;max-height:58vh;width:100%}
 .cam video,.cam img{width:100%;height:100%;object-fit:cover;display:block}
@@ -62,6 +63,10 @@ details.refs{margin-top:6px}details.refs summary{font-size:13px;color:var(--sub)
 .none{background:#fff;border-radius:14px;padding:14px;font-size:14px;border:1px dashed #adb5bd}
 .none b{font-size:16px}
 details.ocr{margin-top:8px;font-size:12.5px;color:var(--sub)}details.ocr pre{white-space:pre-wrap;background:#fff;border-radius:8px;padding:8px;max-height:160px;overflow:auto}
+.ai{background:#fff;border-radius:14px;padding:12px;margin-top:4px;border:1px solid var(--line)}
+.aihd{font-size:14px;font-weight:800;margin-bottom:8px}.aihd span{display:block;font-size:12px;font-weight:400;color:var(--sub);margin-top:2px}
+.aibtns{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:6px}.aibtns .btn{text-align:center;text-decoration:none;padding:11px 0;font-size:14px}
+.linkbtn{border:0;background:none;color:var(--accent);font-size:13px;margin-top:8px;padding:4px 0}
 footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-height:1.6}
 .legend{display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px;margin-top:6px;justify-content:center}
 </style>
@@ -76,13 +81,14 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
 <main>
   <div id="banners"></div>
 
-  <div class="langhd">포장에 적힌 글자의 언어 <span>(인식용 · 결과는 항상 한국어로 표시)</span></div>
+  <div class="langhd">포장 글자 언어 <span>(영어와 함께 읽음 · 결과는 항상 한국어)</span></div>
   <div class="langs" id="langs">
-    <button class="chip on" data-l="eng">영문</button>
+    <button class="chip on" data-l="auto">자동</button>
+    <button class="chip" data-l="eng">영문</button>
+    <button class="chip" data-l="eng+kor">한국어</button>
     <button class="chip" data-l="eng+jpn">일본어</button>
     <button class="chip" data-l="eng+chi_sim">중국어(간체)</button>
     <button class="chip" data-l="eng+chi_tra">중국어(번체)</button>
-    <button class="chip" data-l="eng+kor">한국어</button>
   </div>
 
   <section class="panel on" id="p-cam">
@@ -121,6 +127,15 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
 
   <h2>판정 결과 <button class="clr" id="clear">결과 지우기</button></h2>
   <div id="results"><div class="none">아직 판정한 내용이 없습니다.</div></div>
+  <div class="ai" id="aiBox" hidden>
+    <div class="aihd">AI로 상세 검색 <span>의심스러우면 인식한 글자와 판정 결과를 그대로 넘겨 물어볼 수 있습니다 (인터넷 필요)</span></div>
+    <div class="aibtns">
+      <a class="btn" id="aiClaude" target="_blank" rel="noopener">Claude에게 묻기</a>
+      <a class="btn sec" id="aiGpt" target="_blank" rel="noopener">ChatGPT</a>
+      <a class="btn sec" id="aiGoogle" target="_blank" rel="noopener">구글 검색</a>
+    </div>
+    <button class="linkbtn" id="aiCopy">질문 내용 복사</button>
+  </div>
 
   <footer>
     <div class="legend"><span class="verdict 마약">마약</span><span class="verdict 향정">향정</span><span class="verdict 대마">대마</span><span class="verdict 임시마약류">임시마약류</span><span class="verdict 원료물질">원료물질</span></div>

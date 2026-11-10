@@ -1,5 +1,5 @@
 /* 오프라인 캐시 — 사전·엔진을 폰에 저장. 버전을 올리면 다음 접속 때 새 파일로 교체 */
-const VER = "lbs-2026-11-10-7";
+const VER = "lbs-2026-11-10-9";
 const CORE = ["./", "index.html", "app.js", "match.js", "manifest.webmanifest", "data/dict.json",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",
   "vendor/tesseract.min.js", "vendor/worker.min.js", "vendor/lang/eng.traineddata.gz"];

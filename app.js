@@ -5,7 +5,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let IDX = null, DICT = null;
 let worker = null, workerLang = null, workerLoading = null;
-let lang = localStorage.getItem("lang") || "eng";
+let mode = localStorage.getItem("lang2") || "auto";   // auto 또는 고정 언어
 const found = new Map();   // ingredient id -> result (누적)
 let lastText = "";
 
@@ -57,40 +57,77 @@ async function loadDict() {
 }
 
 /* ---------- 글자 인식 엔진 ---------- */
-async function getWorker() {
-  if (worker && workerLang === lang) return worker;
-  if (workerLoading) return workerLoading;
+const LANG_NAME = { eng: "영문", "eng+kor": "한국어", "eng+jpn": "일본어", "eng+chi_sim": "중국어(간체)", "eng+chi_tra": "중국어(번체)" };
+let active = mode === "auto" ? "eng" : mode;   // 실제 인식에 쓰는 언어 조합
+let needDetect = mode === "auto", emptyStreak = 0;
+
+async function getWorker(want = active) {
+  if (workerLoading) await workerLoading.catch(() => {});
+  if (worker && workerLang === want) return worker;
   workerLoading = (async () => {
-    if (worker) { try { await worker.terminate(); } catch (e) {} worker = null; }
-    status("글자 인식 엔진 준비 중…", 0);
-    const w = await Tesseract.createWorker(lang.split("+"), 1, {
-      workerPath: abs("vendor/worker.min.js"),
-      corePath: abs("vendor/core"),
-      langPath: abs("vendor/lang"),
-      gzip: true,
-      cacheMethod: "write",
-      logger: m => {
-        if (m.status && /load|initializ/i.test(m.status)) status("글자 인식 엔진 준비 중… (처음 한 번만 오래 걸립니다)", m.progress || 0);
-      },
-    });
-    await w.setParameters({ tessedit_pageseg_mode: "11", preserve_interword_spaces: "1" });
-    worker = w; workerLang = lang; status("");
-    return w;
+    if (worker) {                                           // 같은 엔진에서 언어만 교체
+      await worker.reinitialize(want.split("+"), 1);
+    } else {
+      status("글자 인식 엔진 준비 중…", 0);
+      worker = await Tesseract.createWorker(want.split("+"), 1, {
+        workerPath: abs("vendor/worker.min.js"), corePath: abs("vendor/core"), langPath: abs("vendor/lang"),
+        gzip: true, cacheMethod: "write",
+        logger: m => { if (m.status && /load|initializ/i.test(m.status) && !running) status("글자 인식 엔진 준비 중… (처음 한 번만 오래 걸립니다)", m.progress || 0); },
+      });
+      status("");
+    }
+    await worker.setParameters({ tessedit_pageseg_mode: "11", preserve_interword_spaces: "1" });
+    workerLang = want;
+    return worker;
   })();
   try { return await workerLoading; } finally { workerLoading = null; }
 }
 
+function confidentWords(data, minConf) {
+  const out = [];
+  for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+    const ws = (l.words || []).filter(x => x.confidence >= minConf && x.text.trim());
+    if (ws.length) out.push(ws);
+  }
+  return out;
+}
+
 /* 글자 인식 — 신뢰도 낮은 단어(잡음)는 버림. minConf: 0~100 */
 async function ocr(canvas, minConf = 0) {
-  const w = await getWorker();
+  const w = await getWorker(active);
   const { data } = await w.recognize(canvas, {}, { text: true, blocks: minConf > 0 });
   if (!minConf || !data.blocks) return data.text || "";
-  const lines = [];
-  for (const b of data.blocks) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
-    const ws = (l.words || []).filter(x => x.confidence >= minConf && x.text.trim().length > 0).map(x => x.text);
-    if (ws.length) lines.push(ws.join(" "));
+  return confidentWords(data, minConf).map(ws => ws.map(x => x.text).join(" ")).join("\n");
+}
+
+/* 포장 언어 자동 감지: 영어 + 자국 문자 1개 조합 고르기 */
+async function detectLang(canvas) {
+  status("포장 글자 언어 확인 중…");
+  const count = async langs => {
+    const w = await getWorker(langs);
+    const { data } = await w.recognize(canvas, {}, { text: true, blocks: true });
+    const c = { hangul: 0, kana: 0, han: 0, hanConf: 0, hanWords: 0 };
+    for (const ws of confidentWords(data, 55)) for (const x of ws) {
+      const t = x.text;
+      c.hangul += (t.match(/[\uac00-\ud7a3]/g) || []).length;
+      c.kana += (t.match(/[\u3040-\u30ff]/g) || []).length;
+      const h = (t.match(/[\u3400-\u9fff]/g) || []).length;
+      if (h) { c.han += h; c.hanConf += x.confidence; c.hanWords++; }
+    }
+    return c;
+  };
+  let pick = "eng";
+  const c = await count("eng+kor+jpn+chi_sim");
+  if (c.kana >= 2) pick = "eng+jpn";
+  else if (c.hangul >= 2 && c.hangul >= c.han) pick = "eng+kor";
+  else if (c.han >= 2) {                                    // 간체·번체는 둘 다 읽어 보고 더 자신 있는 쪽
+    const s = await count("eng+chi_sim"), t = await count("eng+chi_tra");
+    const ms = s.hanWords ? s.hanConf / s.hanWords : 0, mt = t.hanWords ? t.hanConf / t.hanWords : 0;
+    pick = mt > ms ? "eng+chi_tra" : "eng+chi_sim";
   }
-  return lines.join("\n");
+  active = pick; needDetect = false; emptyStreak = 0;
+  showLangs();
+  return pick;
 }
 
 /* 이미지 전처리: 회색조 + 명암 늘리기 */
@@ -140,6 +177,7 @@ function render(newRes, opts = {}) {
     box.innerHTML = opts.searched
       ? `<div class="none"><b>사전 미등재</b><br>사전에서 일치하는 성분·제품명을 찾지 못했습니다. <b>비해당이라는 뜻이 아닙니다.</b><br>성분표 글자를 더 가까이·밝게 비추거나, ‘직접 입력’으로 성분명을 넣어 확인해 주세요.</div>`
       : `<div class="none">아직 판정한 내용이 없습니다.</div>`;
+    updateAi();
     return;
   }
   const card = r => {
@@ -162,18 +200,53 @@ function render(newRes, opts = {}) {
     : `<div class="none"><b>사전 미등재</b><br>확실하게 일치하는 성분·제품명을 찾지 못했습니다. <b>비해당이라는 뜻이 아닙니다.</b></div>`;
   if (ref.length) html += `<details class="refs"><summary>참고: 약한 일치 ${ref.length}건 (판정 근거로 쓰지 마세요)</summary>${ref.map(card).join("")}</details>`;
   box.innerHTML = html;
+  updateAi();
 }
+/* ---------- AI 상세 검색 ---------- */
+let lastInput = "";
+function aiPrompt() {
+  const src = (lastInput || lastText || "").replace(/\s+/g, " ").trim().slice(0, 700);
+  const res = [...found.values()].filter(isMain).map(r => `${r.ing.k || r.ing.e}(${r.ing.e}, ${r.ing.g})`).join(", ");
+  const weak = [...found.values()].filter(r => !isMain(r)).map(r => r.ing.k || r.ing.e).join(", ");
+  return [
+    "의약품 포장에서 읽은 글자를 보고 한국 마약류 해당 여부를 확인하고 싶습니다.",
+    `포장에서 읽은 글자: "${src || "(없음)"}"`,
+    `오프라인 판정앱 결과: ${res || "사전 미등재"}${weak ? ` / 약한 일치(참고): ${weak}` : ""}`,
+    "1) 이 글자로 추정되는 정확한 제품명·제조국·주성분과 함량을 찾아 주세요(글자 인식 오류가 있을 수 있음).",
+    "2) 주성분 중 한국 마약류관리법상 마약·향정신성의약품·대마, 식약처 지정 임시마약류, 또는 원료물질에 해당하는 것이 있는지 근거(시행령 별표, 공고)와 함께 알려 주세요.",
+    "3) 확실하지 않은 부분은 추정이라고 구분해 주세요.",
+  ].join("\n");
+}
+function updateAi() {
+  const has = !!(lastInput || lastText || found.size);
+  $("#aiBox").hidden = !has;
+  if (!has) return;
+  const p = aiPrompt(), q = encodeURIComponent(p);
+  $("#aiClaude").href = "https://claude.ai/new?q=" + q;
+  $("#aiGpt").href = "https://chatgpt.com/?q=" + q;
+  const words = (lastInput || lastText || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  $("#aiGoogle").href = "https://www.google.com/search?q=" + encodeURIComponent(words + " 성분");
+}
+document.querySelectorAll("#aiBox a").forEach(x => x.addEventListener("click", e => {
+  if (!navigator.onLine) { e.preventDefault(); status("AI 검색은 인터넷 연결이 필요합니다."); }
+}));
+$("#aiCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(aiPrompt()); status("질문 내용을 복사했습니다. AI 앱에 붙여 넣으세요."); }
+  catch (e) { status("복사하지 못했습니다."); }
+};
+
 function showOcr(text) {
   lastText = text;
   $("#ocrBox").hidden = !text.trim();
   $("#ocrText").textContent = text.trim();
+  updateAi();
 }
 function judge(text, opts) {
   const res = Matcher.match(IDX, text);
   render(res, opts);
   return res;
 }
-$("#clear").onclick = () => { found.clear(); if (typeof seen !== "undefined") seen.clear(); render([]); showOcr(""); };
+$("#clear").onclick = () => { lastInput = ""; if (mode === "auto") needDetect = true; found.clear(); if (typeof seen !== "undefined") seen.clear(); render([]); showOcr(""); };
 
 /* ---------- 탭 ---------- */
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
@@ -181,14 +254,22 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".panel").forEach(p => p.classList.toggle("on", p.id === "p-" + b.dataset.tab));
   if (b.dataset.tab !== "cam") camStop();
 });
+function showLangs() {
+  document.querySelectorAll("#langs .chip").forEach(c => {
+    c.classList.toggle("on", c.dataset.l === mode);
+    if (c.dataset.l === "auto") c.innerHTML = mode === "auto" && workerLang
+      ? `자동 <small>· ${LANG_NAME[active] || "영문"}</small>` : "자동";
+  });
+}
 document.querySelectorAll("#langs .chip").forEach(c => {
-  c.classList.toggle("on", c.dataset.l === lang);
   c.onclick = () => {
-    lang = c.dataset.l; localStorage.setItem("lang", lang);
-    document.querySelectorAll("#langs .chip").forEach(x => x.classList.toggle("on", x === c));
-    getWorker().catch(e => status("엔진 준비 실패: " + e.message));
+    mode = c.dataset.l; localStorage.setItem("lang2", mode);
+    if (mode === "auto") { needDetect = true; }
+    else { active = mode; getWorker(active).catch(e => status("엔진 준비 실패: " + e.message)); }
+    showLangs();
   };
 });
+showLangs();
 
 /* ---------- 카메라(실시간) ---------- */
 let stream = null, running = false, paused = false, track = null, torchOn = false, frames = 0, lastMs = 0, shotHi = false;
@@ -196,6 +277,7 @@ const seen = new Map();   // 실시간 모드에서 제품명 인식 횟수
 const barcode = ("BarcodeDetector" in window) ? new BarcodeDetector({ formats: ["ean_13", "data_matrix", "code_128", "upc_a"] }) : null;
 
 async function camStart() {
+  lastInput = "";
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
   } catch (e) {
@@ -210,6 +292,7 @@ async function camStart() {
   $("#camOver").style.display = "none";
   $("#camPause").disabled = $("#camStop").disabled = $("#camShot").disabled = false;
   running = true; paused = false; $("#camPause").textContent = "일시정지";
+  if (mode === "auto") needDetect = true;
   loop();
 }
 function camStop() {
@@ -245,9 +328,14 @@ async function loop() {
       } catch (e) {}
     }
     let text = "";
+    if (mode === "auto" && needDetect) { try { await detectLang(canvas); } catch (e) {} if (!running) break; }
     try { text = await ocr(canvas, hi ? 60 : 70); } catch (e) { status("인식 오류: " + e.message); await sleep(800); continue; }
     if (!running) break;
     lastMs = performance.now() - t0;
+    if (mode === "auto") {                               // 글자가 계속 안 읽히면 다른 포장으로 보고 언어 재감지
+      emptyStreak = text.replace(/\s/g, "").length < 4 ? emptyStreak + 1 : 0;
+      if (emptyStreak >= 6) needDetect = true;
+    }
     const clean = text.replace(/\s+/g, " ").trim();
     const lv = $("#live"); lv.style.display = "block";
     lv.textContent = clean ? "인식: " + clean.slice(0, 120) : "글자를 찾지 못했습니다 — 더 가까이, 밝게 비춰 주세요";
@@ -294,6 +382,7 @@ $("#camTorch").onclick = async () => {
 $("#photoPick").onclick = () => $("#photoInput").click();
 $("#photoInput").onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
+  lastInput = "";
   const url = URL.createObjectURL(f);
   const img = $("#photoImg"); img.src = url; img.style.display = "block"; $("#photoOver").style.display = "none";
   await img.decode().catch(() => {});
@@ -309,6 +398,8 @@ $("#photoInput").onchange = async e => {
   }
   try {
     const c = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000);
+    if (mode === "auto") await detectLang(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1200));
+    status("사진에서 글자 읽는 중…");
     const text = await ocr(c, 60);
     showOcr(text);
     res = res.concat(Matcher.match(IDX, text).map(r => (r.level === "상표" && (r.confirmed = true), r)));
@@ -322,7 +413,7 @@ $("#photoInput").onchange = async e => {
 $("#textGo").onclick = () => {
   const t = $("#textIn").value;
   if (!t.trim()) return;
-  found.clear(); showOcr("");
+  found.clear(); showOcr(""); lastInput = t.trim();
   const r = Matcher.match(IDX, t).map(x => (x.level === "상표" && (x.confirmed = true), x));
   render(r, { searched: true });
   status(r.length ? "" : "사전에서 찾지 못했습니다");
@@ -336,5 +427,8 @@ $("#textIn").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shif
   if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
   try { await loadDict(); } catch (e) { status("사전을 불러오지 못했습니다. 처음 한 번은 인터넷 연결이 필요합니다."); return; }
   // 엔진은 미리 준비(첫 실행 시 데이터 저장)
-  getWorker().then(() => status("준비 완료 — 오프라인에서도 사용할 수 있습니다")).catch(() => {});
+  getWorker(active).then(() => {
+    status("준비 완료 — 오프라인에서도 사용할 수 있습니다"); showLangs();
+    for (const l of ["kor", "jpn", "chi_sim", "chi_tra"]) fetch(abs(`vendor/lang/${l}.traineddata.gz`)).catch(() => {});
+  }).catch(() => {});
 })();

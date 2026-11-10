@@ -58,13 +58,21 @@
       }
     });
     cjk.sort((a, b) => b[0].length - a[0].length);
-    return { dict, latin, cjk, fuzzy, maxWords: Math.min(maxWords, 7) };
+    const longer = new Map();   // 짧은 단어 → [[긴 단어의 앞부분, termIdx]]
+    const keys = cjk.map(c => c[0]);
+    for (const [L, li] of cjk) for (const [K] of cjk) {
+      if (L.length > K.length + 1 && L.endsWith(K)) {
+        if (!longer.has(K)) longer.set(K, []);
+        longer.get(K).push([L.slice(0, L.length - K.length), li]);
+      }
+    }
+    return { dict, latin, cjk, longer, fuzzy, maxWords: Math.min(maxWords, 7) };
   }
 
   /** 텍스트 → 매칭 결과(성분별 묶음) */
   function match(idx, text, opts) {
     opts = opts || {};
-    const { dict, latin, cjk, fuzzy, maxWords } = idx;
+    const { dict, latin, cjk, longer, fuzzy, maxWords } = idx;
     const hits = [];   // {termIdx, found, how}
     const norm = normLatin(text);
     const toks = norm.split(" ").filter(Boolean);
@@ -92,20 +100,30 @@
     const flat = text.normalize("NFKC").replace(/\s+/g, "");
     if (CJK.test(flat)) {
       // 긴 단어부터 찾고, 이미 찾은 긴 단어 속에만 들어 있는 짧은 단어는 제외(ジヒドロコデイン 속 コデイン 등)
-      const covered = new Uint8Array(flat.length);
+      const covered = Array.from({ length: flat.length }, () => null);   // 글자별로 이미 찾은 성분 id 목록
       const spans = [], seen = new Map();
       for (const [key, ti] of cjk) {
         if (seen.has(key)) { if (seen.get(key)) hits.push({ ti, found: key, how: "일치" }); continue; }
         let from = 0, pos, ok = false;
         while ((pos = flat.indexOf(key, from)) !== -1) {
           let inside = true;
-          for (let k = pos; k < pos + key.length; k++) if (!covered[k]) { inside = false; break; }
+          const myId = dict.terms[ti][1];
+          for (let k = pos; k < pos + key.length; k++) if (!covered[k] || covered[k].includes(myId)) { inside = false; break; }
           if (!inside) { ok = true; spans.push([pos, pos + key.length]); }
           from = pos + 1;
         }
         seen.set(key, ok);
+        if (ok && longer.has(key)) {                       // 앞이 잘린 긴 단어인지 확인
+          const p = flat.indexOf(key);
+          const before = flat.slice(Math.max(0, p - 4), p);
+          const tailLen = pre => { let n = 0; for (let k = 1; k <= Math.min(before.length, pre.length); k++) if (pre.endsWith(before.slice(-k))) n = k; return n; };
+          const alt = longer.get(key).map(([pre, li]) => [pre, li, tailLen(pre)])
+            .filter(([pre, , n]) => n >= 2 || (n >= 1 && pre.length <= 2))
+            .sort((x, y) => y[2] - x[2] || x[0].length - y[0].length)[0];
+          if (alt) { hits.push({ ti: alt[1], found: before + key, how: "일치" }); seen.set(key, false); continue; }
+        }
         if (ok) hits.push({ ti, found: key, how: "일치" });
-        if (ok && spans.length) for (const [a, b] of spans.splice(0)) for (let k = a; k < b; k++) covered[k] = 1;
+        if (ok && spans.length) { const id = dict.terms[ti][1]; for (const [a, b] of spans.splice(0)) for (let k = a; k < b; k++) (covered[k] = covered[k] || []).push(id); }
       }
     }
     // 성분별로 묶기
