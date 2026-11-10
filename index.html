@@ -65,7 +65,11 @@ details.refs{margin-top:6px}details.refs summary{font-size:13px;color:var(--sub)
 details.ocr{margin-top:8px;font-size:12.5px;color:var(--sub)}details.ocr pre{white-space:pre-wrap;background:#fff;border-radius:8px;padding:8px;max-height:160px;overflow:auto}
 .ai{background:#fff;border-radius:14px;padding:12px;margin-top:4px;border:1px solid var(--line)}
 .aihd{font-size:14px;font-weight:800;margin-bottom:8px}.aihd span{display:block;font-size:12px;font-weight:400;color:var(--sub);margin-top:2px}
-.aibtns{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:6px}.aibtns .btn{text-align:center;text-decoration:none;padding:11px 0;font-size:14px}
+.aihint{font-size:12px;color:var(--sub);margin:0 2px 8px}
+.caps{margin-top:10px}.capshd{font-size:13px;font-weight:700;margin:0 2px 6px}.capshd span{font-weight:400;color:var(--sub);font-size:12px}
+.caplist{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.caplist figure{margin:0;position:relative}.caplist img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;display:block;background:#ddd}
+.caplist figcaption{font-size:11px;color:var(--sub);text-align:center;margin-top:2px}.caplist button{position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:11px;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:14px;line-height:22px;padding:0}
+.aibtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.aibtns .btn{text-align:center;text-decoration:none;padding:11px 0;font-size:14px}
 .linkbtn{border:0;background:none;color:var(--accent);font-size:13px;margin-top:8px;padding:4px 0}
 footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-height:1.6}
 .legend{display:flex;gap:6px;flex-wrap:wrap;font-size:11.5px;margin-top:6px;justify-content:center}
@@ -100,7 +104,7 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
       <div class="camover" id="camOver"><div style="font-size:15px">포장에 카메라를 비추면<br>제품명·성분명을 자동으로 읽어 판정합니다</div><button class="btn" id="camStart" style="flex:none;padding:12px 26px">카메라 켜기</button></div>
     </div>
     <div class="row">
-      <button class="btn" id="camShot" disabled>이 화면으로 판정</button>
+      <button class="btn" id="camShot" disabled>찍어서 판정</button>
       <button class="btn sec" id="camPause" disabled>일시정지</button>
       <button class="btn sec" id="camTorch" style="display:none">플래시</button>
       <button class="btn sec" id="camStop" disabled>끄기</button>
@@ -109,10 +113,10 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
 
   <section class="panel" id="p-photo">
     <div class="cam" id="photoBox" style="aspect-ratio:auto;min-height:180px;display:flex;align-items:center;justify-content:center">
-      <div class="camover" id="photoOver" style="position:static"><div>사진을 찍거나 앨범에서 골라 주세요</div></div>
+      <div class="camover" id="photoOver" style="position:static"><div>제품명이 있는 면과 성분표 면을<br>각각 찍거나 앨범에서 함께 골라 주세요 (최대 4장)</div></div>
       <img id="photoImg" alt="" style="display:none;object-fit:contain;max-height:58vh">
     </div>
-    <input type="file" id="photoInput" accept="image/*" hidden>
+    <input type="file" id="photoInput" accept="image/*" multiple hidden>
     <div class="row"><button class="btn" id="photoPick">사진 선택 / 촬영</button></div>
   </section>
 
@@ -121,6 +125,10 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
     <div class="row"><button class="btn" id="textGo">판정</button><button class="btn sec" id="textClr">지우기</button></div>
   </section>
 
+  <div class="caps" id="caps" hidden>
+    <div class="capshd">포장 사진 <span>제품명 면·성분표 면을 남겨 두면 AI 검색이 정확해집니다</span></div>
+    <div class="caplist" id="capList"></div>
+  </div>
   <div class="status" id="status"></div>
   <div class="bar" id="bar"><i></i></div>
   <details class="ocr" id="ocrBox" hidden><summary>인식된 글자 보기</summary><pre id="ocrText"></pre></details>
@@ -129,8 +137,10 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
   <div id="results"><div class="none">아직 판정한 내용이 없습니다.</div></div>
   <div class="ai" id="aiBox" hidden>
     <div class="aihd">AI로 상세 검색 <span>의심스러우면 인식한 글자와 판정 결과를 그대로 넘겨 물어볼 수 있습니다 (인터넷 필요)</span></div>
+    <button class="btn" id="aiShare" hidden style="width:100%;margin-bottom:6px">📷 사진과 함께 AI에게 묻기</button>
+    <div class="aihint" id="aiShareHint" hidden></div>
     <div class="aibtns">
-      <a class="btn" id="aiClaude" target="_blank" rel="noopener">Claude에게 묻기</a>
+      <a class="btn sec" id="aiClaude" target="_blank" rel="noopener">Claude 웹</a>
       <a class="btn sec" id="aiGpt" target="_blank" rel="noopener">ChatGPT</a>
       <a class="btn sec" id="aiGoogle" target="_blank" rel="noopener">구글 검색</a>
     </div>

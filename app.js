@@ -204,13 +204,14 @@ function render(newRes, opts = {}) {
 }
 /* ---------- AI 상세 검색 ---------- */
 let lastInput = "";
-function aiPrompt() {
-  const src = (lastInput || lastText || "").replace(/\s+/g, " ").trim().slice(0, 700);
+function aiPrompt(withPhotos) {
+  const src = (lastInput || lastText || "").replace(/\s+/g, " ").trim().slice(0, withPhotos ? 300 : 700);
   const res = [...found.values()].filter(isMain).map(r => `${r.ing.k || r.ing.e}(${r.ing.e}, ${r.ing.g})`).join(", ");
   const weak = [...found.values()].filter(r => !isMain(r)).map(r => r.ing.k || r.ing.e).join(", ");
   return [
-    "의약품 포장에서 읽은 글자를 보고 한국 마약류 해당 여부를 확인하고 싶습니다.",
-    `포장에서 읽은 글자: "${src || "(없음)"}"`,
+    withPhotos ? "첨부한 의약품 포장 사진(앞면·성분표 등)을 직접 읽고 한국 마약류 해당 여부를 확인해 주세요."
+               : "의약품 포장에서 읽은 글자를 보고 한국 마약류 해당 여부를 확인하고 싶습니다.",
+    `${withPhotos ? "참고로 앱이 자동으로 읽은 글자(오타 많음)" : "포장에서 읽은 글자(오타 있을 수 있음)"}: "${src || "(없음)"}"`,
     `오프라인 판정앱 결과: ${res || "사전 미등재"}${weak ? ` / 약한 일치(참고): ${weak}` : ""}`,
     "1) 이 글자로 추정되는 정확한 제품명·제조국·주성분과 함량을 찾아 주세요(글자 인식 오류가 있을 수 있음).",
     "2) 주성분 중 한국 마약류관리법상 마약·향정신성의약품·대마, 식약처 지정 임시마약류, 또는 원료물질에 해당하는 것이 있는지 근거(시행령 별표, 공고)와 함께 알려 주세요.",
@@ -218,7 +219,13 @@ function aiPrompt() {
   ].join("\n");
 }
 function updateAi() {
-  const has = !!(lastInput || lastText || found.size);
+  const has = !!(lastInput || lastText || found.size || caps.length);
+  const canShare = caps.length && navigator.canShare && navigator.canShare({ files: [new File([caps[0].blob], "a.jpg", { type: "image/jpeg" })] });
+  $("#aiShare").hidden = !canShare;
+  $("#aiShareHint").hidden = !caps.length;
+  $("#aiShareHint").textContent = canShare
+    ? `사진 ${caps.length}장과 질문을 함께 보냅니다. 공유 목록에서 Claude 앱을 고르세요(질문은 복사도 해 둡니다).`
+    : caps.length ? "이 브라우저는 사진 공유를 지원하지 않습니다. 사진을 길게 눌러 저장한 뒤 AI 앱에 첨부해 주세요." : "";
   $("#aiBox").hidden = !has;
   if (!has) return;
   const p = aiPrompt(), q = encodeURIComponent(p);
@@ -230,6 +237,13 @@ function updateAi() {
 document.querySelectorAll("#aiBox a").forEach(x => x.addEventListener("click", e => {
   if (!navigator.onLine) { e.preventDefault(); status("AI 검색은 인터넷 연결이 필요합니다."); }
 }));
+$("#aiShare").onclick = async () => {
+  const p = aiPrompt(true);
+  try { await navigator.clipboard.writeText(p); } catch (e) {}
+  const files = caps.map((c, i) => new File([c.blob], `포장사진_${i + 1}.jpg`, { type: "image/jpeg" }));
+  try { await navigator.share({ files, text: p, title: "의약품 포장 확인" }); }
+  catch (e) { if (e.name !== "AbortError") status("공유하지 못했습니다: " + e.message); }
+};
 $("#aiCopy").onclick = async () => {
   try { await navigator.clipboard.writeText(aiPrompt()); status("질문 내용을 복사했습니다. AI 앱에 붙여 넣으세요."); }
   catch (e) { status("복사하지 못했습니다."); }
@@ -246,7 +260,7 @@ function judge(text, opts) {
   render(res, opts);
   return res;
 }
-$("#clear").onclick = () => { lastInput = ""; if (mode === "auto") needDetect = true; found.clear(); if (typeof seen !== "undefined") seen.clear(); render([]); showOcr(""); };
+$("#clear").onclick = () => { lastInput = ""; caps.splice(0).forEach(c => URL.revokeObjectURL(c.url)); drawCaps(); if (mode === "auto") needDetect = true; found.clear(); if (typeof seen !== "undefined") seen.clear(); render([]); showOcr(""); };
 
 /* ---------- 탭 ---------- */
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
@@ -270,6 +284,33 @@ document.querySelectorAll("#langs .chip").forEach(c => {
   };
 });
 showLangs();
+
+/* ---------- 캡처 사진(포장 앞·뒷면) ---------- */
+const MAX_CAPS = 4;
+const caps = [];           // {blob, url, label, score, auto}
+function grabFrame(src, w0, h0, maxW = 1600) {
+  const sc = Math.min(1, maxW / w0), c = document.createElement("canvas");
+  c.width = Math.round(w0 * sc); c.height = Math.round(h0 * sc);
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(b => r(b), "image/jpeg", 0.85));
+}
+function addCap(blob, label, score = 0, auto = false) {
+  if (!blob) return;
+  if (auto) {                                           // 자동 캡처는 한 장만 유지하고 더 잘 읽힌 화면으로 교체
+    const i = caps.findIndex(c => c.auto);
+    if (i >= 0) { if (caps[i].score >= score) return; URL.revokeObjectURL(caps[i].url); caps.splice(i, 1); }
+  }
+  if (caps.length >= MAX_CAPS) { const j = caps.findIndex(c => c.auto); const k = j >= 0 ? j : 0; URL.revokeObjectURL(caps[k].url); caps.splice(k, 1); }
+  caps.push({ blob, url: URL.createObjectURL(blob), label, score, auto });
+  drawCaps();
+}
+function drawCaps() {
+  const box = $("#caps");
+  box.hidden = !caps.length;
+  $("#capList").innerHTML = caps.map((c, i) => `<figure><img src="${c.url}" alt=""><figcaption>${esc(c.label)}</figcaption><button data-i="${i}" aria-label="삭제">×</button></figure>`).join("");
+  $("#capList").querySelectorAll("button").forEach(b => b.onclick = () => { const i = +b.dataset.i; URL.revokeObjectURL(caps[i].url); caps.splice(i, 1); drawCaps(); });
+  updateAi();
+}
 
 /* ---------- 카메라(실시간) ---------- */
 let stream = null, running = false, paused = false, track = null, torchOn = false, frames = 0, lastMs = 0, shotHi = false;
@@ -340,6 +381,10 @@ async function loop() {
     const lv = $("#live"); lv.style.display = "block";
     lv.textContent = clean ? "인식: " + clean.slice(0, 120) : "글자를 찾지 못했습니다 — 더 가까이, 밝게 비춰 주세요";
     if (text.trim()) showOcr(text);
+    const score = (clean.match(/[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/g) || []).length;
+    const autoCap = caps.find(c => c.auto);
+    if (hi) addCap(await grabFrame(v, vw, vh), "촬영 " + (caps.filter(c => c.label.startsWith("촬영")).length + 1), score);
+    else if (score >= 12 && (!autoCap || score > autoCap.score * 1.2)) addCap(await grabFrame(v, vw, vh), "자동 캡처", score, true);
     const m = Matcher.match(IDX, text, { fuzzy: false });
     for (const r of m) if (r.level === "상표") {           // 같은 제품명이 2번 이상 읽혀야 확정
       const k = r.id + "|" + r.evidence.filter(e => e.strength === 1).map(e => e.term).sort().join(",");
@@ -351,6 +396,7 @@ async function loop() {
     render(res, { searched: true });
     const fresh = res.filter(r => isMain(r) && !before.has(r.id));
     if (fresh.length) {
+      if (!hi) addCap(await grabFrame(v, vw, vh), "판정 화면", score);
       $("#guide").classList.add("hit");
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       paused = true; $("#camPause").textContent = "계속 읽기";
@@ -364,7 +410,7 @@ async function loop() {
   }
 }
 $("#camStart").onclick = camStart;
-$("#camShot").onclick = () => {           // 한 장을 더 높은 해상도로 판독
+$("#camShot").onclick = () => {           // 한 장을 더 높은 해상도로 판독 + 사진 보관
   shotHi = true; paused = false; $("#camPause").textContent = "일시정지"; $("#guide").classList.remove("hit");
   status("다음 판독에서 이 화면을 정밀하게 읽습니다…");
 };
@@ -380,13 +426,10 @@ $("#camTorch").onclick = async () => {
 
 /* ---------- 사진 ---------- */
 $("#photoPick").onclick = () => $("#photoInput").click();
-$("#photoInput").onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
-  lastInput = "";
+async function judgeImage(f) {
   const url = URL.createObjectURL(f);
   const img = $("#photoImg"); img.src = url; img.style.display = "block"; $("#photoOver").style.display = "none";
   await img.decode().catch(() => {});
-  status("사진에서 글자 읽는 중…");
   let res = [];
   if (barcode) {
     try {
@@ -396,15 +439,24 @@ $("#photoInput").onchange = async e => {
       }
     } catch (e) {}
   }
+  const c = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000);
+  if (mode === "auto") await detectLang(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1200));
+  const text = await ocr(c, 60);
+  addCap(await grabFrame(img, img.naturalWidth, img.naturalHeight), "사진 " + (caps.filter(x => x.label.startsWith("사진")).length + 1));
+  return { text, res: res.concat(Matcher.match(IDX, text).map(r => (r.level === "상표" && (r.confirmed = true), r))) };
+}
+$("#photoInput").onchange = async e => {
+  const files = [...e.target.files].slice(0, MAX_CAPS); if (!files.length) return;
+  lastInput = "";
   try {
-    const c = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000);
-    if (mode === "auto") await detectLang(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1200));
-    status("사진에서 글자 읽는 중…");
-    const text = await ocr(c, 60);
-    showOcr(text);
-    res = res.concat(Matcher.match(IDX, text).map(r => (r.level === "상표" && (r.confirmed = true), r)));
-    render(res, { searched: true });
-    status(res.some(isMain) ? "판정 완료" : "판정 완료 — 확실한 일치 없음(사전 미등재)");
+    const texts = [];
+    for (let i = 0; i < files.length; i++) {
+      status(`사진에서 글자 읽는 중… (${i + 1}/${files.length})`);
+      const r = await judgeImage(files[i]);
+      texts.push(r.text); render(r.res, { searched: true });
+    }
+    showOcr(texts.join("\n"));
+    status([...found.values()].some(isMain) ? "판정 완료" : "판정 완료 — 확실한 일치 없음(사전 미등재)");
   } catch (err) { status("인식 오류: " + err.message); }
   e.target.value = "";
 };
