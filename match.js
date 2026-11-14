@@ -66,13 +66,14 @@
         longer.get(K).push([L.slice(0, L.length - K.length), li]);
       }
     }
-    return { dict, latin, cjk, longer, fuzzy, maxWords: Math.min(maxWords, 7) };
+    const nofuzzy = new Set(dict.nofuzzy || []);   // 비규제 실제 약 이름(규제 성분과 철자가 비슷) — 유사보정 제외
+    return { dict, latin, cjk, longer, fuzzy, nofuzzy, maxWords: Math.min(maxWords, 7) };
   }
 
   /** 텍스트 → 매칭 결과(성분별 묶음) */
   function match(idx, text, opts) {
     opts = opts || {};
-    const { dict, latin, cjk, longer, fuzzy, maxWords } = idx;
+    const { dict, latin, cjk, longer, fuzzy, nofuzzy, maxWords } = idx;
     const hits = [];   // {termIdx, found, how}
     const norm = normLatin(text);
     const toks = norm.split(" ").filter(Boolean);
@@ -91,8 +92,8 @@
     }
     // OCR 오인식 보정: 성분명(7자 이상)만 1~2글자 차이 허용
     if (opts.fuzzy !== false) toks.forEach((tk, k) => {
-      if (used.has(k) || tk.length < 7 || !/^[a-z\-]+$/.test(tk)) return;
-      const max = tk.length >= 11 ? 2 : 1;
+      if (used.has(k) || tk.length < 8 || !/^[a-z\-]+$/.test(tk) || nofuzzy.has(tk)) return;
+      const max = tk.length >= 12 ? 2 : 1;
       for (const [key, ti] of fuzzy.get(tk[0]) || []) {
         if (lev(tk, key, max) <= max) hits.push({ ti, found: tk, how: "유사(오인식 보정)" });
       }

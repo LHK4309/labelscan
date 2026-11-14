@@ -67,7 +67,7 @@ details.ocr{margin-top:8px;font-size:12.5px;color:var(--sub)}details.ocr pre{whi
 .aihd{font-size:14px;font-weight:800;margin-bottom:8px}.aihd span{display:block;font-size:12px;font-weight:400;color:var(--sub);margin-top:2px}
 .aihint{font-size:12px;color:var(--sub);margin:0 2px 8px}
 .caps{margin-top:10px}.capshd{font-size:13px;font-weight:700;margin:0 2px 6px}.capshd span{font-weight:400;color:var(--sub);font-size:12px}
-.caplist{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.caplist figure{margin:0;position:relative}.caplist img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;display:block;background:#ddd}
+.caplist{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}.caplist figure{margin:0;position:relative}.caplist img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;display:block;background:#ddd}
 .caplist figcaption{font-size:11px;color:var(--sub);text-align:center;margin-top:2px}.caplist button{position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:11px;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:14px;line-height:22px;padding:0}
 .aibtns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.aibtns .btn{text-align:center;text-decoration:none;padding:11px 0;font-size:14px}
 .linkbtn{border:0;background:none;color:var(--accent);font-size:13px;margin-top:8px;padding:4px 0}
@@ -113,11 +113,13 @@ footer{font-size:11.5px;color:var(--sub);text-align:center;margin-top:20px;line-
 
   <section class="panel" id="p-photo">
     <div class="cam" id="photoBox" style="aspect-ratio:auto;min-height:180px;display:flex;align-items:center;justify-content:center">
-      <div class="camover" id="photoOver" style="position:static"><div>제품명이 있는 면과 성분표 면을<br>각각 찍거나 앨범에서 함께 골라 주세요 (최대 4장)</div></div>
+      <div class="camover" id="photoOver" style="position:static"><div>제품명이 있는 면과 성분표 면을<br>각각 찍거나 함께 골라 주세요 (최대 6장)</div></div>
       <img id="photoImg" alt="" style="display:none;object-fit:contain;max-height:58vh">
     </div>
     <input type="file" id="photoInput" accept="image/*" multiple hidden>
-    <div class="row"><button class="btn" id="photoPick">사진 선택 / 촬영</button></div>
+    <input type="file" id="fileInput" multiple hidden>
+    <div class="row"><button class="btn" id="photoPick">앨범·카메라</button><button class="btn sec" id="filePick">파일·폴더에서 찾기</button></div>
+    <div class="status" style="margin-top:6px">앨범에 안 보이는 사진(메신저·다운로드 폴더 등)은 ‘파일·폴더에서 찾기’로 고르세요. 최대 6장.</div>
   </section>
 
   <section class="panel" id="p-text">

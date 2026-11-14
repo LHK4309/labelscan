@@ -1,5 +1,5 @@
 "use strict";
-const APP_VER = "2026-11-10-11";
+const APP_VER = "2026-11-14-13";
 const $ = s => document.querySelector(s);
 const abs = p => new URL(p, location.href).href;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -97,8 +97,10 @@ function confidentWords(data, minConf) {
 async function ocr(canvas, minConf = 0) {
   const w = await getWorker(active);
   const { data } = await w.recognize(canvas, {}, { text: true, blocks: minConf > 0 });
-  if (!minConf || !data.blocks) return data.text || "";
-  return confidentWords(data, minConf).map(ws => ws.map(x => x.text).join(" ")).join("\n");
+  const full = data.text || "";
+  // 판정에는 전체 글자를 쓰고(성분명은 신뢰도가 낮게 나와도 정확히 읽히는 경우가 많음), 화면 표시는 또렷한 글자만
+  const shown = minConf && data.blocks ? confidentWords(data, minConf).map(ws => ws.map(x => x.text).join(" ")).join("\n") : full;
+  return Object.assign(new String(full), { shown });
 }
 
 /* 포장 언어 자동 감지: 영어 + 자국 문자 1개 조합 고르기 */
@@ -107,9 +109,11 @@ async function detectLang(canvas) {
   const count = async langs => {
     const w = await getWorker(langs);
     const { data } = await w.recognize(canvas, {}, { text: true, blocks: true });
-    const c = { hangul: 0, kana: 0, han: 0, hanConf: 0, hanWords: 0 };
-    for (const ws of confidentWords(data, 55)) for (const x of ws) {
+    const c = { hangul: 0, kana: 0, han: 0, hanConf: 0, hanWords: 0, latin: 0 };
+    for (const ws of confidentWords(data, 75)) for (const x of ws) {
       const t = x.text;
+      c.latin += (t.match(/[A-Za-z]/g) || []).length;
+      if (t.replace(/[^\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/g, "").length < 2) continue;   // 한 글자짜리는 잡음으로 봄
       c.hangul += (t.match(/[\uac00-\ud7a3]/g) || []).length;
       c.kana += (t.match(/[\u3040-\u30ff]/g) || []).length;
       const h = (t.match(/[\u3400-\u9fff]/g) || []).length;
@@ -119,9 +123,10 @@ async function detectLang(canvas) {
   };
   let pick = "eng";
   const c = await count("eng+kor+jpn+chi_sim");
-  if (c.kana >= 2) pick = "eng+jpn";
-  else if (c.hangul >= 2 && c.hangul >= c.han) pick = "eng+kor";
-  else if (c.han >= 2) {                                    // 간체·번체는 둘 다 읽어 보고 더 자신 있는 쪽
+  const enough = n => n >= 6 && n * 4 >= c.latin * 0.5;        // 자국 문자가 충분히 많을 때만
+  if (enough(c.kana) || (c.kana >= 4 && enough(c.kana + c.han))) pick = "eng+jpn";
+  else if (enough(c.hangul) && c.hangul >= c.han) pick = "eng+kor";
+  else if (enough(c.han)) {                                    // 간체·번체는 둘 다 읽어 보고 더 자신 있는 쪽
     const s = await count("eng+chi_sim"), t = await count("eng+chi_tra");
     const ms = s.hanWords ? s.hanConf / s.hanWords : 0, mt = t.hanWords ? t.hanConf / t.hanWords : 0;
     pick = mt > ms ? "eng+chi_tra" : "eng+chi_sim";
@@ -150,6 +155,30 @@ function prep(src, sx, sy, sw, sh, maxW) {
   return c;
 }
 
+/* 캔버스 회전(90·180·270도) */
+function rotate(c, deg) {
+  if (!deg) return c;
+  const r = document.createElement("canvas"), sw = deg % 180 !== 0;
+  r.width = sw ? c.height : c.width; r.height = sw ? c.width : c.height;
+  const g = r.getContext("2d");
+  g.translate(r.width / 2, r.height / 2); g.rotate(deg * Math.PI / 180);
+  g.drawImage(c, -c.width / 2, -c.height / 2);
+  return r;
+}
+/* 방향 고르기: 0·90·270도로 빠르게 읽어 보고 글자가 가장 많이 읽히는 방향 */
+let lastRotN = 0;
+async function bestRotation(c, langs = active) {
+  const w = await getWorker(langs);
+  let best = 0, bestN = -1;
+  for (const deg of [0, 90, 270]) {
+    const { data } = await w.recognize(rotate(c, deg), {}, { text: true, blocks: true });
+    const n = confidentWords(data, 75).flat().reduce((s, x) => s + (x.text.match(/[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/g) || []).length, 0);
+    if (n > bestN * 1.15) { best = deg; bestN = n; }
+  }
+  lastRotN = bestN;
+  return best;
+}
+
 /* ---------- 결과 표시 ---------- */
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function lawText(i) {
@@ -161,7 +190,7 @@ function verdictLabel(g) {
   return { 마약: "마약", 향정: "향정신성의약품", 대마: "대마", 임시마약류: "임시마약류", 원료물질: "원료물질(마약류 아님)" }[g] || g;
 }
 const RANK = { 확인: 0, 상표: 1, 유사: 2, 주의: 3 };
-function isMain(r) { return r.level === "확인" || (r.level === "상표" && r.confirmed); }
+function isMain(r) { return r.level === "확인" || ((r.level === "상표" || r.level === "유사") && r.confirmed); }
 function render(newRes, opts = {}) {
   for (const r of newRes) {
     const prev = found.get(r.id);
@@ -185,7 +214,8 @@ function render(newRes, opts = {}) {
     const i = r.ing;
     const ev = r.evidence.map(e => `<span>${esc(e.type)}: ${esc(e.orig)}${e.how !== "일치" ? " (" + esc(e.how) + ")" : ""}</span>`).join("");
     const names = [i.z, i.j].filter(Boolean).join(" · ");
-    const tag = isMain(r) ? (r.level === "상표" ? `<span class="lvl 상표">제품명으로 찾음 — 성분표 확인 권장</span>` : "")
+    const tag = isMain(r) ? (r.level === "상표" ? `<span class="lvl 상표">제품명으로 찾음 — 성분표 확인 권장</span>`
+      : r.level === "유사" ? `<span class="lvl 유사">글자 1자 차이로 찾음 — 포장 표기 확인</span>` : "")
       : `<span class="lvl 주의">${r.level === "유사" ? "글자가 비슷함(오인식 가능)" : r.level === "상표" ? "제품명 1회만 인식 — 다시 비춰 확인" : "짧은·흔한 단어 일치"}</span>`;
     return `<div class="card ${esc(i.g)}${isMain(r) ? "" : " weak"}">
       <span class="verdict ${esc(i.g)}">${esc(verdictLabel(i.g))}</span>${tag}
@@ -287,7 +317,7 @@ document.querySelectorAll("#langs .chip").forEach(c => {
 showLangs();
 
 /* ---------- 캡처 사진(포장 앞·뒷면) ---------- */
-const MAX_CAPS = 4;
+const MAX_CAPS = 6;
 const caps = [];           // {blob, url, label, score, auto}
 function grabFrame(src, w0, h0, maxW = 1600) {
   const sc = Math.min(1, maxW / w0), c = document.createElement("canvas");
@@ -316,6 +346,7 @@ function drawCaps() {
 /* ---------- 카메라(실시간) ---------- */
 let stream = null, running = false, paused = false, track = null, torchOn = false, frames = 0, lastMs = 0, shotHi = false;
 const seen = new Map();   // 실시간 모드에서 제품명 인식 횟수
+let camRot = 0, lowStreak = 0;  // 실시간 판독 방향
 const barcode = ("BarcodeDetector" in window) ? new BarcodeDetector({ formats: ["ean_13", "data_matrix", "code_128", "upc_a"] }) : null;
 
 async function camStart() {
@@ -355,9 +386,10 @@ async function loop() {
     const vw = v.videoWidth, vh = v.videoHeight, box = $("#camBox").getBoundingClientRect();
     const s = Math.max(box.width / vw, box.height / vh);            // object-fit: cover 보정
     const ox = (vw * s - box.width) / 2, oy = (vh * s - box.height) / 2;
-    const gx = (box.width * 0.07 + ox) / s, gy = (box.height * 0.30 + oy) / s;
-    const gw = (box.width * 0.86) / s, gh = (box.height * 0.40) / s;
-    const canvas = prep(v, gx, gy, gw, gh, shotHi ? 1800 : 1000);
+    const top = camRot ? 0.10 : 0.30, hgt = camRot ? 0.80 : 0.40;   // 옆으로 읽을 때는 세로로 더 넓게
+    const gx = (box.width * 0.07 + ox) / s, gy = (box.height * top + oy) / s;
+    const gw = (box.width * 0.86) / s, gh = (box.height * hgt) / s;
+    const canvas = rotate(prep(v, gx, gy, gw, gh, shotHi ? 1800 : 1000), camRot);
     const hi = shotHi; shotHi = false;
     status(hi ? "촬영한 화면 판독 중…" : `읽는 중… (${frames}번째${lastMs ? ", 1회 " + (lastMs / 1000).toFixed(1) + "초" : ""})`);
     let res = [];
@@ -378,15 +410,24 @@ async function loop() {
       emptyStreak = text.replace(/\s/g, "").length < 4 ? emptyStreak + 1 : 0;
       if (emptyStreak >= 6) needDetect = true;
     }
-    const clean = text.replace(/\s+/g, " ").trim();
+    // 글자가 적게 읽히면 옆으로 누운 포장일 수 있어 방향을 바꿔 시험
+    if ((clean0 => (clean0.match(/[A-Za-z\u3040-\u9fff\uac00-\ud7a3]/g) || []).length)(text) < 8) {
+      lowStreak++;
+      if (lowStreak >= 3) { camRot = { 0: 90, 90: 270, 270: 0 }[camRot]; lowStreak = 0; }
+    } else lowStreak = 0;
+    const clean = (text.shown ?? String(text)).replace(/\s+/g, " ").trim();
     const lv = $("#live"); lv.style.display = "block";
     lv.textContent = clean ? "인식: " + clean.slice(0, 120) : "글자를 찾지 못했습니다 — 더 가까이, 밝게 비춰 주세요";
-    if (text.trim()) showOcr(text);
+    if (clean) showOcr(text.shown ?? String(text));
     const score = (clean.match(/[A-Za-z\u3040-\u30ff\u3400-\u9fff\uac00-\ud7a3]/g) || []).length;
     const autoCap = caps.find(c => c.auto);
     if (hi) addCap(await grabFrame(v, vw, vh), "촬영 " + (caps.filter(c => c.label.startsWith("촬영")).length + 1), score);
     else if (score >= 12 && (!autoCap || score > autoCap.score * 1.2)) addCap(await grabFrame(v, vw, vh), "자동 캡처", score, true);
-    const m = Matcher.match(IDX, text, { fuzzy: false });
+    const m = Matcher.match(IDX, String(text));
+    for (const r of m) if (r.level === "유사") {
+      const k = "f|" + r.id, n = (seen.get(k) || 0) + 1; seen.set(k, n);
+      if (n >= 2 || hi) r.confirmed = true;
+    }
     for (const r of m) if (r.level === "상표") {           // 같은 제품명이 2번 이상 읽혀야 확정
       const k = r.id + "|" + r.evidence.filter(e => e.strength === 1).map(e => e.term).sort().join(",");
       const n = (seen.get(k) || 0) + 1; seen.set(k, n);
@@ -427,10 +468,12 @@ $("#camTorch").onclick = async () => {
 
 /* ---------- 사진 ---------- */
 $("#photoPick").onclick = () => $("#photoInput").click();
+$("#filePick").onclick = () => $("#fileInput").click();
 async function judgeImage(f) {
   const url = URL.createObjectURL(f);
   const img = $("#photoImg"); img.src = url; img.style.display = "block"; $("#photoOver").style.display = "none";
   await img.decode().catch(() => {});
+  if (!img.naturalWidth) throw new Error(`${f.name || "사진"}을(를) 열 수 없습니다(HEIC 등 지원하지 않는 형식일 수 있음)`);
   let res = [];
   if (barcode) {
     try {
@@ -440,22 +483,33 @@ async function judgeImage(f) {
       }
     } catch (e) {}
   }
-  const c = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000);
-  if (mode === "auto") await detectLang(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1200));
-  const text = await ocr(c, 60);
+  status("글자 방향 확인 중…");
+  const small = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1000);
+  let deg = await bestRotation(small, mode === "auto" ? "eng" : active);
+  if (mode === "auto" && lastRotN < 15) deg = await bestRotation(small, "eng+kor+jpn+chi_sim");   // 영문이 거의 없으면 한·중·일 문자로 다시
+  const c = rotate(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000), deg);
+  if (mode === "auto") await detectLang(rotate(small, deg));
+  status("사진에서 글자 읽는 중…");
+  let text = await ocr(c, 60);
+  if (mode === "auto" && active !== "eng") {              // 자국어로 읽은 결과가 빈약하면 영문으로 한 번 더
+    const t2 = await (async () => { const keep = active; active = "eng"; const t = await ocr(c, 60); active = keep; return t; })();
+    text = text + "\n" + t2;
+  }
   addCap(await grabFrame(img, img.naturalWidth, img.naturalHeight), "사진 " + (caps.filter(x => x.label.startsWith("사진")).length + 1));
-  return { text, res: res.concat(Matcher.match(IDX, text).map(r => (r.level === "상표" && (r.confirmed = true), r))) };
+  return { text: text.shown ?? String(text), res: res.concat(Matcher.match(IDX, String(text)).map(r => ((r.level === "상표" || r.level === "유사") && (r.confirmed = true), r))) };
 }
-$("#photoInput").onchange = async e => {
+$("#photoInput").onchange = $("#fileInput").onchange = async e => {
   const files = [...e.target.files].slice(0, MAX_CAPS); if (!files.length) return;
   lastInput = "";
   try {
     const texts = [];
+    const bad = [];
     for (let i = 0; i < files.length; i++) {
       status(`사진에서 글자 읽는 중… (${i + 1}/${files.length})`);
-      const r = await judgeImage(files[i]);
-      texts.push(r.text); render(r.res, { searched: true });
+      try { const r = await judgeImage(files[i]); texts.push(r.text); render(r.res, { searched: true }); }
+      catch (err) { bad.push(err.message); }
     }
+    if (bad.length) { showOcr(texts.join("\n")); status(bad.join(" / ")); e.target.value = ""; return; }
     showOcr(texts.join("\n"));
     status([...found.values()].some(isMain) ? "판정 완료" : "판정 완료 — 확실한 일치 없음(사전 미등재)");
   } catch (err) { status("인식 오류: " + err.message); }
@@ -467,7 +521,7 @@ $("#textGo").onclick = () => {
   const t = $("#textIn").value;
   if (!t.trim()) return;
   found.clear(); showOcr(""); lastInput = t.trim();
-  const r = Matcher.match(IDX, t).map(x => (x.level === "상표" && (x.confirmed = true), x));
+  const r = Matcher.match(IDX, t).map(x => ((x.level === "상표" || x.level === "유사") && (x.confirmed = true), x));
   render(r, { searched: true });
   status(r.length ? "" : "사전에서 찾지 못했습니다");
 };
