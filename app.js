@@ -1,5 +1,5 @@
 "use strict";
-const APP_VER = "2026-11-14-13";
+const APP_VER = "2026-11-14-14";
 const $ = s => document.querySelector(s);
 const abs = p => new URL(p, location.href).href;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -25,6 +25,11 @@ addEventListener("online", setNet); addEventListener("offline", setNet);
 /* ---------- 안내 배너 ---------- */
 function banners() {
   const ua = navigator.userAgent;
+  // 카카오톡 안에서 열리면 자동으로 기본 브라우저(크롬·사파리)로 넘김
+  if (/KAKAOTALK/i.test(ua) && !sessionStorage.getItem("kakaoOut")) {
+    sessionStorage.setItem("kakaoOut", 1);
+    location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);
+  }
   const box = $("#banners"); box.innerHTML = "";
   const add = (key, html) => {
     if (localStorage.getItem("hide-" + key)) return;
