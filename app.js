@@ -1,11 +1,11 @@
 "use strict";
-const APP_VER = "2026-11-14-14";
+const APP_VER = "2026-11-14-15";
 const $ = s => document.querySelector(s);
 const abs = p => new URL(p, location.href).href;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let IDX = null, DICT = null;
-let worker = null, workerLang = null, workerLoading = null;
+let worker = null, workerLang = null, workerLoading = null, workerPsm = "11";
 let mode = localStorage.getItem("lang2") || "auto";   // auto 또는 고정 언어
 const found = new Map();   // ingredient id -> result (누적)
 let lastText = "";
@@ -76,13 +76,14 @@ async function getWorker(want = active) {
     } else {
       status("글자 인식 엔진 준비 중…", 0);
       worker = await Tesseract.createWorker(want.split("+"), 1, {
-        workerPath: abs("vendor/worker.min.js"), corePath: abs("vendor/core"), langPath: abs("vendor/lang"),
+        workerPath: abs("vendor/worker.min.js"), corePath: abs("vendor/core"), langPath: abs("vendor/lang_fast"), cachePath: "fast1",
         gzip: true, cacheMethod: "write",
         logger: m => { if (m.status && /load|initializ/i.test(m.status) && !running) status("글자 인식 엔진 준비 중… (처음 한 번만 오래 걸립니다)", m.progress || 0); },
       });
       status("");
     }
     await worker.setParameters({ tessedit_pageseg_mode: "11", preserve_interword_spaces: "1" });
+    workerPsm = "11";
     workerLang = want;
     return worker;
   })();
@@ -99,8 +100,9 @@ function confidentWords(data, minConf) {
 }
 
 /* 글자 인식 — 신뢰도 낮은 단어(잡음)는 버림. minConf: 0~100 */
-async function ocr(canvas, minConf = 0) {
-  const w = await getWorker(active);
+async function ocr(canvas, minConf = 0, psm = "11", langs = active) {
+  const w = await getWorker(langs);
+  if (workerPsm !== psm) { await w.setParameters({ tessedit_pageseg_mode: psm }); workerPsm = psm; }
   const { data } = await w.recognize(canvas, {}, { text: true, blocks: minConf > 0 });
   const full = data.text || "";
   // 판정에는 전체 글자를 쓰고(성분명은 신뢰도가 낮게 나와도 정확히 읽히는 경우가 많음), 화면 표시는 또렷한 글자만
@@ -147,15 +149,17 @@ function prep(src, sx, sy, sw, sh, maxW) {
   const c = document.createElement("canvas");
   c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
   const g = c.getContext("2d", { willReadFrequently: true });
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
   g.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
   const img = g.getImageData(0, 0, c.width, c.height), d = img.data;
-  let lo = 255, hi = 0;
-  for (let i = 0; i < d.length; i += 4) {
-    const y = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
-    d[i] = y; if (y < lo) lo = y; if (y > hi) hi = y;
-  }
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) { const y = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 | 0; d[i] = y; hist[y]++; }
+  // 위아래 2%를 잘라 명암 늘리기(은박 반사·그림자에 덜 휘둘림)
+  const n = d.length / 4, cut = n * 0.02; let lo = 0, hi = 255, acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > cut) { lo = v; break; } }
+  acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > cut) { hi = v; break; } }
   const k = hi - lo > 20 ? 255 / (hi - lo) : 1;
-  for (let i = 0; i < d.length; i += 4) { const v = (d[i] - lo) * k; d[i] = d[i + 1] = d[i + 2] = v; }
+  for (let i = 0; i < d.length; i += 4) { const v = Math.max(0, Math.min(255, (d[i] - lo) * k)); d[i] = d[i + 1] = d[i + 2] = v; }
   g.putImageData(img, 0, 0);
   return c;
 }
@@ -166,11 +170,28 @@ function rotate(c, deg) {
   const r = document.createElement("canvas"), sw = deg % 180 !== 0;
   r.width = sw ? c.height : c.width; r.height = sw ? c.width : c.height;
   const g = r.getContext("2d");
+  g.imageSmoothingQuality = "high";
   g.translate(r.width / 2, r.height / 2); g.rotate(deg * Math.PI / 180);
   g.drawImage(c, -c.width / 2, -c.height / 2);
   return r;
 }
 /* 방향 고르기: 0·90·270도로 빠르게 읽어 보고 글자가 가장 많이 읽히는 방향 */
+/* 글자줄이 가로인지 세로인지 화소 분포로 빠르게 추정(수십 ms) — 가로면 0, 세로면 90 */
+function guessAxis(c) {
+  const W = 200, H = Math.round(c.height * 200 / c.width);
+  const t = document.createElement("canvas"); t.width = W; t.height = H;
+  const g = t.getContext("2d", { willReadFrequently: true }); g.drawImage(c, 0, 0, W, H);
+  const d = g.getImageData(0, 0, W, H).data;
+  let mean = 0; for (let i = 0; i < d.length; i += 4) mean += d[i]; mean /= W * H;
+  const rows = new Float64Array(H), cols = new Float64Array(W);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4, dark = d[i] < mean - 30 ? 1 : 0;
+    if (x && dark !== (d[i - 4] < mean - 30 ? 1 : 0)) rows[y]++;       // 가로 방향 명암 변화 = 가로 글자줄
+    if (y && dark !== (d[i - W * 4] < mean - 30 ? 1 : 0)) cols[x]++;   // 세로 방향 명암 변화 = 세로 글자줄
+  }
+  const varN = a => { const m = a.reduce((s, v) => s + v, 0) / a.length || 1; return a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length / (m * m); };
+  return varN(rows) >= varN(cols) ? 0 : 90;
+}
 let lastRotN = 0;
 async function bestRotation(c, langs = active) {
   const w = await getWorker(langs);
@@ -474,6 +495,7 @@ $("#camTorch").onclick = async () => {
 /* ---------- 사진 ---------- */
 $("#photoPick").onclick = () => $("#photoInput").click();
 $("#filePick").onclick = () => $("#fileInput").click();
+const clearOf = t => (String(t.shown ?? "").match(/[A-Za-z]/g) || []).length / Math.max(1, (String(t).match(/[A-Za-z]/g) || []).length);
 async function judgeImage(f) {
   const url = URL.createObjectURL(f);
   const img = $("#photoImg"); img.src = url; img.style.display = "block"; $("#photoOver").style.display = "none";
@@ -488,17 +510,34 @@ async function judgeImage(f) {
       }
     } catch (e) {}
   }
-  status("글자 방향 확인 중…");
-  const small = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1000);
-  let deg = await bestRotation(small, mode === "auto" ? "eng" : active);
-  if (mode === "auto" && lastRotN < 15) deg = await bestRotation(small, "eng+kor+jpn+chi_sim");   // 영문이 거의 없으면 한·중·일 문자로 다시
-  const c = rotate(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 2000), deg);
-  if (mode === "auto") await detectLang(rotate(small, deg));
+  const base = prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1400);
+  const hit = t => Matcher.match(IDX, String(t)).some(r => r.level === "확인" || r.level === "유사");
+  // ① 빠른 판독: 방향 추정 + 영문 1회
+  let deg = guessAxis(base);
   status("사진에서 글자 읽는 중…");
-  let text = await ocr(c, 60);
-  if (mode === "auto" && active !== "eng") {              // 자국어로 읽은 결과가 빈약하면 영문으로 한 번 더
-    const t2 = await (async () => { const keep = active; active = "eng"; const t = await ocr(c, 60); active = keep; return t; })();
-    text = text + "\n" + t2;
+  const first = await ocr(rotate(base, deg), 60, "3", "eng"); let text = first;
+  // ①-2 같은 방향, 흩어진 글자 모드로 한 번 더(은박·곡면 포장에 강함) — 방향이 틀린 듯하면 건너뜀
+  if (!hit(text) && clearOf(first) >= 0.3) {
+    status("글자를 다시 읽는 중…");
+    const tb = await ocr(rotate(base, deg), 60, "11", "eng");
+    text = tb + "\n" + text;
+  }
+  // ② 그래도 못 찾고 읽힌 글자도 적으면 다른 방향으로(추정이 틀렸거나 반대로 누운 경우)
+  const letters = t => (String(t).match(/[A-Za-z]/g) || []).length;
+  const clear = t => letters(t.shown ?? "") / Math.max(1, letters(t));   // 또렷한 글자 비율(방향이 맞으면 높음)
+  let firstClear = clear(first);
+  for (const d2 of (deg ? [270, 0] : [90, 270])) {
+    if (hit(text) || firstClear > 0.6) break;
+    if (hit(text)) break;
+    status("방향을 바꿔 다시 읽는 중…");
+    const t2 = await ocr(rotate(base, d2), 60, "3", "eng");
+    if (hit(t2) || clear(t2) > firstClear + 0.15) { text = t2; deg = d2; firstClear = clear(t2); }
+  }
+  if (!hit(text) && (mode !== "eng")) {
+    // ③ 한·중·일 문자 포장: 자동이면 언어 감지 후, 아니면 고른 언어로
+    status("자국어 글자 확인 중…");
+    if (mode === "auto") await detectLang(rotate(prep(img, 0, 0, img.naturalWidth, img.naturalHeight, 1000), deg));
+    if (active !== "eng") { const t3 = await ocr(rotate(base, deg), 60, "3", active); text = t3 + "\n" + text; }
   }
   addCap(await grabFrame(img, img.naturalWidth, img.naturalHeight), "사진 " + (caps.filter(x => x.label.startsWith("사진")).length + 1));
   return { text: text.shown ?? String(text), res: res.concat(Matcher.match(IDX, String(text)).map(r => ((r.level === "상표" || r.level === "유사") && (r.confirmed = true), r))) };
@@ -548,6 +587,6 @@ $("#textIn").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shif
   // 엔진은 미리 준비(첫 실행 시 데이터 저장)
   getWorker(active).then(() => {
     status("준비 완료 — 오프라인에서도 사용할 수 있습니다"); showLangs();
-    for (const l of ["kor", "jpn", "chi_sim", "chi_tra"]) fetch(abs(`vendor/lang/${l}.traineddata.gz`)).catch(() => {});
+    for (const l of ["kor", "jpn", "chi_sim", "chi_tra"]) fetch(abs(`vendor/lang_fast/${l}.traineddata.gz`)).catch(() => {});
   }).catch(() => {});
 })();
