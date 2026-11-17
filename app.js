@@ -1,5 +1,5 @@
 "use strict";
-const APP_VER = "2026-11-14-15";
+const APP_VER = "2026-11-17-16";
 const $ = s => document.querySelector(s);
 const abs = p => new URL(p, location.href).href;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
